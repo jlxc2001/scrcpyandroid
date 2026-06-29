@@ -58,8 +58,9 @@ public final class ScrcpySession implements AutoCloseable {
     }
 
     private void startBlocking() throws Exception {
-        File key = new File(context.getFilesDir(), "adbkey.pk8");
+        File key = new File(context.getNoBackupFilesDir(), "adbkey.pk8");
         listener.onLog("connecting ADB " + host + ":" + port);
+        listener.onLog("ADB key file: " + key.getAbsolutePath());
         adb = AdbConnection.connect(host, port, key, listener::onLog);
 
         byte[] server = readAsset(ASSET_SERVER);
@@ -70,6 +71,7 @@ public final class ScrcpySession implements AutoCloseable {
         String socketName = "scrcpy_" + scid;
         String cmd = buildServerCommand(scid);
         listener.onLog("starting scrcpy-server scid=" + scid);
+        listener.onLog("server cmd: " + cmd);
         shellStream = adb.open("shell:" + cmd);
         drainShell(shellStream);
 
@@ -91,16 +93,25 @@ public final class ScrcpySession implements AutoCloseable {
     }
 
     private String buildServerCommand(String scid) {
-        // v4.0 server options. Audio is off for the first Android-client build to keep decoder latency low.
-        return "CLASSPATH=" + REMOTE_SERVER + " app_process / com.genymobile.scrcpy.Server " + VERSION
-                + " scid=" + scid
-                + " log_level=info"
-                + " video=true audio=false control=true cleanup=false"
-                + " tunnel_forward=true send_dummy_byte=false"
-                + " send_device_meta=true send_stream_meta=true send_frame_meta=true"
-                + " video_codec=h264 max_size=" + maxSize
-                + " video_bit_rate=" + bitRate
-                + " max_fps=" + maxFps;
+        // Keep the server command deliberately short. Some Samsung firmware builds have
+        // crashed inside MediaCodec/app_process when too many non-default scrcpy server
+        // options are passed. scrcpy defaults are used wherever possible.
+        StringBuilder cmd = new StringBuilder();
+        cmd.append("CLASSPATH=").append(REMOTE_SERVER)
+                .append(" app_process / com.genymobile.scrcpy.Server ").append(VERSION)
+                .append(" scid=").append(scid)
+                .append(" log_level=info")
+                .append(" tunnel_forward=true")
+                .append(" audio=false")
+                .append(" cleanup=false")
+                .append(" send_dummy_byte=false")
+                .append(" max_size=").append(maxSize)
+                .append(" video_bit_rate=").append(bitRate);
+        // 0 means do not pass max_fps at all; this avoids several vendor encoder bugs.
+        if (maxFps > 0) {
+            cmd.append(" max_fps=").append(maxFps);
+        }
+        return cmd.toString();
     }
 
     private byte[] readAsset(String name) throws Exception {

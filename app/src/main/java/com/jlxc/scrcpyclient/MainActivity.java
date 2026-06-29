@@ -68,17 +68,17 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Sc
         panel.setBackgroundColor(0xaa000000);
 
         titleView = new TextView(this);
-        titleView.setText("JLXC Scrcpy Android Client · v4.0 / v0.2");
+        titleView.setText("JLXC Scrcpy Android Client · v4.0 / v0.3");
         titleView.setTextColor(0xff39c5bb);
         titleView.setTextSize(16);
         panel.addView(titleView);
 
         LinearLayout row = row();
-        hostEdit = edit("192.168.1.100"); row.addView(label("ADB IP")); row.addView(hostEdit, weight());
-        portEdit = edit("5555"); row.addView(label("Port")); row.addView(portEdit, small());
-        maxSizeEdit = edit("1280"); row.addView(label("Max")); row.addView(maxSizeEdit, small());
-        bitRateEdit = edit("8000000"); row.addView(label("Bit")); row.addView(bitRateEdit, medium());
-        fpsEdit = edit("60"); row.addView(label("FPS")); row.addView(fpsEdit, small());
+        hostEdit = edit(load("host", "192.168.1.100")); row.addView(label("ADB IP")); row.addView(hostEdit, weight());
+        portEdit = edit(load("port", "5555")); row.addView(label("Port")); row.addView(portEdit, small());
+        maxSizeEdit = edit(load("max", "1280")); row.addView(label("Max")); row.addView(maxSizeEdit, small());
+        bitRateEdit = edit(load("bit", "8000000")); row.addView(label("Bit")); row.addView(bitRateEdit, medium());
+        fpsEdit = edit(load("fps", "0")); row.addView(label("FPS")); row.addView(fpsEdit, small());
         panel.addView(row);
 
         LinearLayout buttons = row();
@@ -94,6 +94,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Sc
         Button home = button("HOME");
         home.setOnClickListener(v -> { try { if (control != null) control.sendHome(); } catch (Exception e) { appendLog(e.getMessage()); } });
         buttons.addView(home);
+        Button safe = button("三星兼容参数");
+        safe.setOnClickListener(v -> {
+            maxSizeEdit.setText("1024");
+            bitRateEdit.setText("4000000");
+            fpsEdit.setText("0");
+            appendLog("已切到兼容参数：Max=1024 Bit=4000000 FPS=0（不传 max_fps）");
+        });
+        buttons.addView(safe);
         Button hide = button("隐藏面板");
         hide.setOnClickListener(v -> panel.setVisibility(View.GONE));
         buttons.addView(hide);
@@ -103,7 +111,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Sc
         logView = new TextView(this);
         logView.setTextColor(0xffdddddd);
         logView.setTextSize(11);
-        logView.setText("提示：目标机需要开启无线 ADB；首次连接要在目标机上同意 RSA 授权。\n");
+        logView.setText("提示：目标机需要开启无线 ADB；首次连接要在目标机上同意 RSA 授权。FPS=0 表示不向 scrcpy-server 传 max_fps，三星机型优先这样测。\n");
         scroll.addView(logView);
         panel.addView(scroll, new LinearLayout.LayoutParams(-1, dp(95)));
 
@@ -122,7 +130,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Sc
         int port = parse(portEdit, 5555);
         int maxSize = parse(maxSizeEdit, 1280);
         int bitrate = parse(bitRateEdit, 8_000_000);
-        int fps = parse(fpsEdit, 60);
+        int fps = parse(fpsEdit, 0);
+        save("host", host); save("port", String.valueOf(port)); save("max", String.valueOf(maxSize)); save("bit", String.valueOf(bitrate)); save("fps", String.valueOf(fps));
         session = new ScrcpySession(this, host, port, maxSize, bitrate, fps, surfaceView.getHolder().getSurface(), this);
         appendLog("starting session...");
         session.startAsync();
@@ -139,6 +148,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Sc
 
     private int parse(EditText e, int fallback) {
         try { return Integer.parseInt(e.getText().toString().trim()); } catch (Exception ex) { return fallback; }
+    }
+
+    private String load(String key, String fallback) {
+        return getSharedPreferences("settings", MODE_PRIVATE).getString(key, fallback);
+    }
+
+    private void save(String key, String value) {
+        getSharedPreferences("settings", MODE_PRIVATE).edit().putString(key, value).apply();
     }
 
     @Override public void surfaceCreated(SurfaceHolder holder) {}

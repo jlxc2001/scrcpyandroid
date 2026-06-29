@@ -35,6 +35,7 @@ public final class AdbConnection implements Closeable {
         socket.setTcpNoDelay(true);
         AdbConnection c = new AdbConnection(socket, log);
         AdbKey key = AdbKey.loadOrCreate(keyFile);
+        if (log != null) log.log("ADB key SHA-256: " + key.fingerprint());
         c.handshake(key);
         c.startReader();
         return c;

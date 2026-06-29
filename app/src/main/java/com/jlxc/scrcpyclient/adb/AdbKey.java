@@ -11,10 +11,13 @@ import java.nio.ByteOrder;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.Signature;
+import java.security.interfaces.RSAPrivateCrtKey;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.RSAPublicKeySpec;
 
 public final class AdbKey {
     private static final int MODULUS_SIZE_WORDS = 64; // 2048 bit / 32
@@ -29,29 +32,60 @@ public final class AdbKey {
     }
 
     public static AdbKey loadOrCreate(File privateFile) throws Exception {
+        File dir = privateFile.getParentFile();
+        if (dir != null) dir.mkdirs();
+        File publicFile = new File(privateFile.getParentFile(), privateFile.getName() + ".pub.der");
+
         if (privateFile.exists()) {
-            byte[] encoded = readAll(privateFile);
-            PrivateKey pk = KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(encoded));
-            // We store public values in a sidecar for simplicity; if missing, recreate the pair.
-            File publicFile = new File(privateFile.getParentFile(), privateFile.getName() + ".pub.der");
-            if (publicFile.exists()) {
-                java.security.spec.X509EncodedKeySpec spec = new java.security.spec.X509EncodedKeySpec(readAll(publicFile));
-                RSAPublicKey pub = (RSAPublicKey) KeyFactory.getInstance("RSA").generatePublic(spec);
+            try {
+                byte[] encoded = readAll(privateFile);
+                PrivateKey pk = KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                RSAPublicKey pub;
+                if (publicFile.exists()) {
+                    java.security.spec.X509EncodedKeySpec spec = new java.security.spec.X509EncodedKeySpec(readAll(publicFile));
+                    pub = (RSAPublicKey) KeyFactory.getInstance("RSA").generatePublic(spec);
+                } else if (pk instanceof RSAPrivateCrtKey) {
+                    RSAPrivateCrtKey crt = (RSAPrivateCrtKey) pk;
+                    RSAPublicKeySpec spec = new RSAPublicKeySpec(crt.getModulus(), crt.getPublicExponent());
+                    pub = (RSAPublicKey) KeyFactory.getInstance("RSA").generatePublic(spec);
+                    writeAll(publicFile, pub.getEncoded());
+                } else {
+                    throw new IllegalStateException("private key exists but public part cannot be reconstructed");
+                }
                 return new AdbKey(pk, pub);
+            } catch (Exception e) {
+                // Keep the bad file for debugging, then create a fresh persistent key.
+                File bad = new File(privateFile.getParentFile(), privateFile.getName() + ".bad." + System.currentTimeMillis());
+                //noinspection ResultOfMethodCallIgnored
+                privateFile.renameTo(bad);
+                //noinspection ResultOfMethodCallIgnored
+                publicFile.delete();
             }
         }
+
         KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
         gen.initialize(2048);
         KeyPair pair = gen.generateKeyPair();
-        privateFile.getParentFile().mkdirs();
-        try (FileOutputStream fos = new FileOutputStream(privateFile)) {
-            fos.write(pair.getPrivate().getEncoded());
-        }
-        File publicFile = new File(privateFile.getParentFile(), privateFile.getName() + ".pub.der");
-        try (FileOutputStream fos = new FileOutputStream(publicFile)) {
-            fos.write(pair.getPublic().getEncoded());
-        }
+        writeAll(privateFile, pair.getPrivate().getEncoded());
+        writeAll(publicFile, pair.getPublic().getEncoded());
         return new AdbKey(pair.getPrivate(), (RSAPublicKey) pair.getPublic());
+    }
+
+    public String fingerprint() {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(adbPublicKey(publicKey));
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < 8 && i < digest.length; i++) {
+                if (i > 0) sb.append(':');
+                String h = Integer.toHexString(digest[i] & 0xff);
+                if (h.length() == 1) sb.append('0');
+                sb.append(h);
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "unknown";
+        }
     }
 
     public byte[] sign(byte[] token) throws Exception {
@@ -108,5 +142,13 @@ public final class AdbKey {
             }
         }
         return data;
+    }
+
+    private static void writeAll(File f, byte[] data) throws Exception {
+        try (FileOutputStream fos = new FileOutputStream(f)) {
+            fos.write(data);
+            fos.flush();
+            fos.getFD().sync();
+        }
     }
 }
