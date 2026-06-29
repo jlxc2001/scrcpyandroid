@@ -68,7 +68,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Sc
         panel.setBackgroundColor(0xaa000000);
 
         titleView = new TextView(this);
-        titleView.setText("JLXC Scrcpy Android Client · v4.0");
+        titleView.setText("JLXC Scrcpy Android Client · v4.0 / v0.2");
         titleView.setTextColor(0xff39c5bb);
         titleView.setTextSize(16);
         panel.addView(titleView);

@@ -1,4 +1,6 @@
-plugins { id 'com.android.application' }
+plugins {
+    id 'com.android.application'
+}
 
 android {
     namespace 'com.jlxc.scrcpyclient'
@@ -8,7 +10,39 @@ android {
         applicationId 'com.jlxc.scrcpyclient'
         minSdk 23
         targetSdk 36
-        versionCode 1
-        versionName '0.1.0-scrcpy4'
+        versionCode 2
+        versionName '0.2-scrcpy4'
     }
 }
+
+// v0.2 fix:
+// The first package did not include scrcpy-server, so the APK showed:
+// "assets/scrcpy-server-v4.0.jar not found".
+// This task downloads the official v4.0 server asset at build time if it is missing.
+// GitHub Actions has internet access, so CI builds will automatically contain the server.
+def scrcpyVersion = '4.0'
+def serverAssetFile = file("$projectDir/src/main/assets/scrcpy-server-v${scrcpyVersion}.jar")
+def serverUrl = "https://github.com/Genymobile/scrcpy/releases/download/v${scrcpyVersion}/scrcpy-server-v${scrcpyVersion}"
+
+tasks.register('ensureScrcpyServer') {
+    outputs.file(serverAssetFile)
+    doLast {
+        if (serverAssetFile.exists() && serverAssetFile.length() > 1024) {
+            println "scrcpy-server already exists: ${serverAssetFile} (${serverAssetFile.length()} bytes)"
+            return
+        }
+        println "Downloading official scrcpy-server v${scrcpyVersion}..."
+        serverAssetFile.parentFile.mkdirs()
+        new URL(serverUrl).withInputStream { input ->
+            serverAssetFile.withOutputStream { output ->
+                output << input
+            }
+        }
+        if (serverAssetFile.length() <= 1024) {
+            throw new GradleException("Downloaded scrcpy-server looks invalid: ${serverAssetFile.length()} bytes")
+        }
+        println "Downloaded ${serverAssetFile} (${serverAssetFile.length()} bytes)"
+    }
+}
+
+preBuild.dependsOn('ensureScrcpyServer')
