@@ -142,6 +142,52 @@ public final class ScrcpySession implements AutoCloseable {
         }, "scrcpy-server-log").start();
     }
 
+
+    public void shellInputKeyevent(int keyCode) {
+        runShellAsync("input keyevent " + keyCode);
+    }
+
+    public void shellInputTap(int x, int y) {
+        runShellAsync("input tap " + clampNonNegative(x) + " " + clampNonNegative(y));
+    }
+
+    public void shellInputSwipe(int x1, int y1, int x2, int y2, int durationMs) {
+        int d = Math.max(1, Math.min(5000, durationMs));
+        runShellAsync("input swipe " + clampNonNegative(x1) + " " + clampNonNegative(y1) + " "
+                + clampNonNegative(x2) + " " + clampNonNegative(y2) + " " + d);
+    }
+
+    private int clampNonNegative(int v) {
+        return Math.max(0, v);
+    }
+
+    private void runShellAsync(String cmd) {
+        new Thread(() -> {
+            AdbConnection c = adb;
+            if (c == null) {
+                listener.onLog("shell skipped, ADB not ready: " + cmd);
+                return;
+            }
+            AdbStream s = null;
+            try {
+                listener.onLog("shell: " + cmd);
+                s = c.open("shell:" + cmd);
+                InputStream in = s.inputStream();
+                byte[] buf = new byte[1024];
+                // Drain until shell command exits. Most input commands close quickly.
+                while (in.read(buf) >= 0) {
+                    // ignore normal output
+                }
+            } catch (Exception e) {
+                listener.onLog("shell failed: " + e.getMessage());
+            } finally {
+                if (s != null) {
+                    try { s.close(); } catch (Exception ignored) {}
+                }
+            }
+        }, "adb-shell-input").start();
+    }
+
     public int videoWidth() { return decoder == null ? 0 : decoder.width(); }
     public int videoHeight() { return decoder == null ? 0 : decoder.height(); }
 

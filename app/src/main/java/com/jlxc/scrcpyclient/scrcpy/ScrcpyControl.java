@@ -9,6 +9,7 @@ import java.io.OutputStream;
 public final class ScrcpyControl {
     private static final int TYPE_INJECT_KEYCODE = 0;
     private static final int TYPE_INJECT_TOUCH_EVENT = 2;
+    private static final int TYPE_ROTATE_DEVICE = 11;
     private static final long POINTER_ID_GENERIC_FINGER = -2L; // UINT64(-2)
 
     private final OutputStream out;
@@ -23,6 +24,11 @@ public final class ScrcpyControl {
 
     public synchronized void sendHome() throws IOException {
         sendKey(KeyEvent.KEYCODE_HOME);
+    }
+
+    public synchronized void sendRotateDevice() throws IOException {
+        out.write(new byte[]{(byte) TYPE_ROTATE_DEVICE});
+        out.flush();
     }
 
     public synchronized void sendKey(int keyCode) throws IOException {

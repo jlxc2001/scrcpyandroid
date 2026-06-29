@@ -10,12 +10,12 @@ android {
         applicationId 'com.jlxc.scrcpyclient'
         minSdk 23
         targetSdk 36
-        versionCode 3
-        versionName '0.3-scrcpy4-samsungfix'
+        versionCode 4
+        versionName '0.4-input-rotate-fit'
     }
 }
 
-// v0.3 build helper:
+// v0.4 build helper:
 // The first package did not include scrcpy-server, so the APK showed:
 // "assets/scrcpy-server-v4.0.jar not found".
 // This task downloads the official v4.0 server asset at build time if it is missing.

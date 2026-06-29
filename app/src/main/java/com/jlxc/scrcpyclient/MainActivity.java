@@ -1,6 +1,8 @@
 package com.jlxc.scrcpyclient;
 
 import android.app.Activity;
+import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -21,54 +23,54 @@ import com.jlxc.scrcpyclient.scrcpy.ScrcpyControl;
 import com.jlxc.scrcpyclient.scrcpy.ScrcpySession;
 
 public class MainActivity extends Activity implements SurfaceHolder.Callback, ScrcpySession.Listener {
+    private FrameLayout root;
     private SurfaceView surfaceView;
+    private LinearLayout panel;
     private TextView logView;
     private TextView titleView;
     private EditText hostEdit, portEdit, maxSizeEdit, bitRateEdit, fpsEdit;
+    private Button fitButton, orientButton, fallbackButton;
     private ScrcpySession session;
     private ScrcpyControl control;
     private int videoW = 0, videoH = 0;
+    private boolean fitVideo = true;
+    private boolean followVideoOrientation = true;
+    private boolean adbFallbackInput = true;
+
+    private float downViewX, downViewY;
+    private int downVideoX, downVideoY;
+    private long downTime;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        fitVideo = Boolean.parseBoolean(load("fit", "true"));
+        followVideoOrientation = Boolean.parseBoolean(load("follow_orientation", "true"));
+        adbFallbackInput = Boolean.parseBoolean(load("fallback_input", "true"));
+        setRequestedOrientation(followVideoOrientation ? ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR : ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         setContentView(buildUi());
     }
 
     private View buildUi() {
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
+        root.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, orr, ob) -> updateSurfaceLayout());
 
         surfaceView = new SurfaceView(this);
         surfaceView.getHolder().addCallback(this);
-        surfaceView.setOnTouchListener((v, event) -> {
-            ScrcpyControl c = control;
-            if (c == null || videoW <= 0 || videoH <= 0) return true;
-            int action;
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN: action = MotionEvent.ACTION_DOWN; break;
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL: action = MotionEvent.ACTION_UP; break;
-                case MotionEvent.ACTION_MOVE: action = MotionEvent.ACTION_MOVE; break;
-                default: return true;
-            }
-            int x = Math.max(0, Math.min(videoW - 1, Math.round(event.getX() * videoW / Math.max(1, v.getWidth()))));
-            int y = Math.max(0, Math.min(videoH - 1, Math.round(event.getY() * videoH / Math.max(1, v.getHeight()))));
-            try { c.sendTouch(action, x, y, videoW, videoH, action == MotionEvent.ACTION_UP ? 0f : 1f); }
-            catch (Exception e) { appendLog("touch failed: " + e.getMessage()); }
-            return true;
-        });
-        root.addView(surfaceView, new FrameLayout.LayoutParams(-1, -1));
+        surfaceView.setBackgroundColor(Color.BLACK);
+        surfaceView.setOnTouchListener((v, event) -> handleTouch(v, event));
+        root.addView(surfaceView, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
 
-        LinearLayout panel = new LinearLayout(this);
+        panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(10), dp(8), dp(10), dp(8));
         panel.setBackgroundColor(0xaa000000);
 
         titleView = new TextView(this);
-        titleView.setText("JLXC Scrcpy Android Client · v4.0 / v0.3");
+        titleView.setText("JLXC Scrcpy Android Client · v4.0 / v0.4");
         titleView.setTextColor(0xff39c5bb);
         titleView.setTextSize(16);
         panel.addView(titleView);
@@ -89,10 +91,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Sc
         stop.setOnClickListener(v -> stopSession());
         buttons.addView(stop);
         Button back = button("BACK");
-        back.setOnClickListener(v -> { try { if (control != null) control.sendBack(); } catch (Exception e) { appendLog(e.getMessage()); } });
+        back.setOnClickListener(v -> sendBack());
         buttons.addView(back);
         Button home = button("HOME");
-        home.setOnClickListener(v -> { try { if (control != null) control.sendHome(); } catch (Exception e) { appendLog(e.getMessage()); } });
+        home.setOnClickListener(v -> sendHome());
         buttons.addView(home);
         Button safe = button("三星兼容参数");
         safe.setOnClickListener(v -> {
@@ -107,18 +109,123 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Sc
         buttons.addView(hide);
         panel.addView(buttons);
 
+        LinearLayout toggles = row();
+        fitButton = button("");
+        fitButton.setOnClickListener(v -> {
+            fitVideo = !fitVideo;
+            save("fit", String.valueOf(fitVideo));
+            updateToggleText();
+            updateSurfaceLayout();
+        });
+        toggles.addView(fitButton);
+        orientButton = button("");
+        orientButton.setOnClickListener(v -> {
+            followVideoOrientation = !followVideoOrientation;
+            save("follow_orientation", String.valueOf(followVideoOrientation));
+            updateToggleText();
+            if (!followVideoOrientation) setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+            else applyVideoOrientation();
+        });
+        toggles.addView(orientButton);
+        fallbackButton = button("");
+        fallbackButton.setOnClickListener(v -> {
+            adbFallbackInput = !adbFallbackInput;
+            save("fallback_input", String.valueOf(adbFallbackInput));
+            updateToggleText();
+            appendLog(adbFallbackInput ? "ADB备用输入已开：触摸/BACK/HOME会走 adb shell input，兼容性更高但有轻微延迟" : "ADB备用输入已关：只走 scrcpy control socket");
+        });
+        toggles.addView(fallbackButton);
+        Button rotateTarget = button("旋转被控屏");
+        rotateTarget.setOnClickListener(v -> {
+            try { if (control != null) control.sendRotateDevice(); }
+            catch (Exception e) { appendLog("rotate failed: " + e.getMessage()); }
+        });
+        toggles.addView(rotateTarget);
+        panel.addView(toggles);
+        updateToggleText();
+
         ScrollView scroll = new ScrollView(this);
         logView = new TextView(this);
         logView.setTextColor(0xffdddddd);
         logView.setTextSize(11);
-        logView.setText("提示：目标机需要开启无线 ADB；首次连接要在目标机上同意 RSA 授权。FPS=0 表示不向 scrcpy-server 传 max_fps，三星机型优先这样测。\n");
+        logView.setText("提示：v0.4 修复画面比例、跟随画面横竖屏，并加入 ADB 备用输入。若触摸出现双击，就关闭“ADB备用输入”。长按画面可重新显示面板。\n");
         scroll.addView(logView);
-        panel.addView(scroll, new LinearLayout.LayoutParams(-1, dp(95)));
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, dp(100)));
 
         FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
         root.addView(panel, p);
         root.setOnLongClickListener(v -> { panel.setVisibility(View.VISIBLE); return true; });
         return root;
+    }
+
+    private boolean handleTouch(View v, MotionEvent event) {
+        if (videoW <= 0 || videoH <= 0) return true;
+        int actionMasked = event.getActionMasked();
+        int vx = Math.max(0, Math.min(videoW - 1, Math.round(event.getX() * videoW / Math.max(1, v.getWidth()))));
+        int vy = Math.max(0, Math.min(videoH - 1, Math.round(event.getY() * videoH / Math.max(1, v.getHeight()))));
+
+        if (actionMasked == MotionEvent.ACTION_DOWN) {
+            downViewX = event.getX();
+            downViewY = event.getY();
+            downVideoX = vx;
+            downVideoY = vy;
+            downTime = System.currentTimeMillis();
+            sendScrcpyTouch(MotionEvent.ACTION_DOWN, vx, vy, 1f);
+            return true;
+        }
+        if (actionMasked == MotionEvent.ACTION_MOVE) {
+            sendScrcpyTouch(MotionEvent.ACTION_MOVE, vx, vy, 1f);
+            return true;
+        }
+        if (actionMasked == MotionEvent.ACTION_UP || actionMasked == MotionEvent.ACTION_CANCEL) {
+            sendScrcpyTouch(MotionEvent.ACTION_UP, vx, vy, 0f);
+            long duration = Math.max(1, System.currentTimeMillis() - downTime);
+            float dx = event.getX() - downViewX;
+            float dy = event.getY() - downViewY;
+            float dist2 = dx * dx + dy * dy;
+            int longPressSlop = dp(16);
+            if (duration > 850 && dist2 < longPressSlop * longPressSlop) {
+                panel.setVisibility(View.VISIBLE);
+                appendLog("长按：显示面板");
+                return true;
+            }
+            if (adbFallbackInput && session != null) {
+                int slop = dp(10);
+                if (dist2 < slop * slop && duration < 700) {
+                    session.shellInputTap(downVideoX, downVideoY);
+                } else {
+                    int d = (int) Math.max(80, Math.min(1200, duration));
+                    session.shellInputSwipe(downVideoX, downVideoY, vx, vy, d);
+                }
+            }
+            return true;
+        }
+        return true;
+    }
+
+    private void sendScrcpyTouch(int action, int x, int y, float pressure) {
+        ScrcpyControl c = control;
+        if (c == null) return;
+        try { c.sendTouch(action, x, y, videoW, videoH, pressure); }
+        catch (Exception e) { appendLog("scrcpy touch failed: " + e.getMessage()); }
+    }
+
+    private void sendBack() {
+        if (adbFallbackInput && session != null) {
+            session.shellInputKeyevent(4);
+            return;
+        }
+        try { if (control != null) control.sendBack(); }
+        catch (Exception e) { appendLog("BACK failed: " + e.getMessage()); }
+    }
+
+    private void sendHome() {
+        if (adbFallbackInput && session != null) {
+            session.shellInputKeyevent(3);
+            return;
+        }
+        try { if (control != null) control.sendHome(); }
+        catch (Exception e) { appendLog("HOME failed: " + e.getMessage()); }
     }
 
     private void startSession() {
@@ -146,6 +253,46 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Sc
         }
     }
 
+    private void updateToggleText() {
+        if (fitButton != null) fitButton.setText(fitVideo ? "比例:适应" : "比例:拉伸");
+        if (orientButton != null) orientButton.setText(followVideoOrientation ? "旋转:跟随画面" : "旋转:锁横屏");
+        if (fallbackButton != null) fallbackButton.setText(adbFallbackInput ? "输入:ADB备用开" : "输入:Scrcpy原生");
+    }
+
+    private void updateSurfaceLayout() {
+        if (root == null || surfaceView == null) return;
+        int pw = root.getWidth();
+        int ph = root.getHeight();
+        if (pw <= 0 || ph <= 0) return;
+        int w = pw;
+        int h = ph;
+        if (fitVideo && videoW > 0 && videoH > 0) {
+            float parentAspect = pw / (float) ph;
+            float videoAspect = videoW / (float) videoH;
+            if (parentAspect > videoAspect) {
+                h = ph;
+                w = Math.max(1, Math.round(h * videoAspect));
+            } else {
+                w = pw;
+                h = Math.max(1, Math.round(w / videoAspect));
+            }
+        }
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) surfaceView.getLayoutParams();
+        if (lp == null) lp = new FrameLayout.LayoutParams(w, h, Gravity.CENTER);
+        if (lp.width != w || lp.height != h || lp.gravity != Gravity.CENTER) {
+            lp.width = w;
+            lp.height = h;
+            lp.gravity = Gravity.CENTER;
+            surfaceView.setLayoutParams(lp);
+        }
+    }
+
+    private void applyVideoOrientation() {
+        if (!followVideoOrientation || videoW <= 0 || videoH <= 0) return;
+        int want = videoW >= videoH ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE : ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT;
+        if (getRequestedOrientation() != want) setRequestedOrientation(want);
+    }
+
     private int parse(EditText e, int fallback) {
         try { return Integer.parseInt(e.getText().toString().trim()); } catch (Exception ex) { return fallback; }
     }
@@ -159,8 +306,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Sc
     }
 
     @Override public void surfaceCreated(SurfaceHolder holder) {}
-    @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {}
+    @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) { updateSurfaceLayout(); }
     @Override public void surfaceDestroyed(SurfaceHolder holder) { stopSession(); }
+    @Override public void onConfigurationChanged(Configuration newConfig) { super.onConfigurationChanged(newConfig); updateSurfaceLayout(); }
 
     @Override public void onConnected(ScrcpyControl control) {
         this.control = control;
@@ -175,6 +323,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Sc
     @Override public void onVideoSize(int width, int height) {
         videoW = width; videoH = height;
         appendLog("video: " + width + "x" + height);
+        runOnUiThread(() -> {
+            applyVideoOrientation();
+            updateSurfaceLayout();
+        });
     }
 
     @Override public void onLog(String line) { appendLog(line); }
@@ -184,7 +336,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Sc
     }
 
     private void appendLog(String s) {
-        runOnUiThread(() -> logView.append(s + "\n"));
+        runOnUiThread(() -> {
+            if (logView != null) logView.append(s + "\n");
+        });
     }
 
     private LinearLayout row() {

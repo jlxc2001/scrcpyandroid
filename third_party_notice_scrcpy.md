@@ -1,11 +1,8 @@
-# Third-party notice: scrcpy
+# Third party notice
 
-This project uses the scrcpy server binary at build time.
+This project is a JLXC Android client demo that interoperates with scrcpy-server.
 
-Project: Genymobile/scrcpy
-Official repository: https://github.com/Genymobile/scrcpy
-Release used by this demo: v4.0
-Server asset: scrcpy-server-v4.0
+scrcpy is developed by Genymobile and contributors and is licensed under Apache License 2.0.
+Official project: https://github.com/Genymobile/scrcpy
 
-The server is downloaded from the official GitHub Release during Gradle build if missing.
-Keep the scrcpy client protocol and server version matched.
+The build script downloads the official `scrcpy-server-v4.0` release asset at build time. Do not replace it with unknown third-party binaries.
